@@ -98,3 +98,17 @@ export const me = async (req, res, next) => {
     next(err);
   }
 };
+
+export const lookupByEmail = async (req, res, next) => {
+  try {
+    const { email } = req.query;
+    if (!email) throw new AppError('Email is required', 400, 'VALIDATION_ERROR');
+
+    const result = await query('SELECT id, email, name FROM users WHERE email = $1', [email]);
+    if (!result.rows[0]) throw new AppError('No user found with that email', 404, 'NOT_FOUND');
+
+    res.json(result.rows[0]);
+  } catch (err) {
+    next(err);
+  }
+};
