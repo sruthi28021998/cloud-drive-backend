@@ -1,10 +1,11 @@
 import { query } from '../config/db.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { cascadeRestoreFolder } from '../utils/cascade.js';
 
 export const search = async (req, res, next) => {
   try {
     const ownerId = req.user.id;
-    const { q, type, starred } = req.query;
+    const { q, type, starred, sort } = req.query;
 
     let sql = `SELECT id, name, 'file' as kind, mime_type, size_bytes, folder_id, updated_at
                FROM files WHERE owner_id = $1 AND is_deleted = false`;
@@ -15,14 +16,20 @@ export const search = async (req, res, next) => {
       sql += ` AND name ILIKE $${idx++}`;
       params.push(`%${q}%`);
     }
-    if (type) {
+    if (type && type !== 'all') {
       sql += ` AND mime_type = $${idx++}`;
       params.push(type);
     }
     if (starred === 'true') {
       sql += ` AND id IN (SELECT resource_id FROM stars WHERE user_id = $1 AND resource_type = 'file')`;
     }
-    sql += ` ORDER BY updated_at DESC LIMIT 100`;
+
+    const sortMap = {
+      name: 'name ASC',
+      date: 'updated_at DESC',
+      size: 'size_bytes DESC'
+    };
+    sql += ` ORDER BY ${sortMap[sort] || 'updated_at DESC'} LIMIT 100`;
 
     const result = await query(sql, params);
     res.json({ results: result.rows });
@@ -81,10 +88,20 @@ export const restoreFromTrash = async (req, res, next) => {
   try {
     const { resourceType, resourceId } = req.body;
     const ownerId = req.user.id;
-    const table = resourceType === 'file' ? 'files' : 'folders';
+
+    if (resourceType === 'folder') {
+      const check = await query(
+        'SELECT id FROM folders WHERE id = $1 AND owner_id = $2 AND is_deleted = true',
+        [resourceId, ownerId]
+      );
+      if (!check.rows[0]) throw new AppError('Folder not found in trash', 404, 'NOT_FOUND');
+
+      await cascadeRestoreFolder(resourceId);
+      return res.json({ ok: true });
+    }
 
     const result = await query(
-      `UPDATE ${table} SET is_deleted = false WHERE id = $1 AND owner_id = $2 RETURNING id`,
+      `UPDATE files SET is_deleted = false WHERE id = $1 AND owner_id = $2 RETURNING id`,
       [resourceId, ownerId]
     );
     if (!result.rows[0]) throw new AppError('Item not found in trash', 404, 'NOT_FOUND');
