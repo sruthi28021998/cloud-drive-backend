@@ -16,8 +16,14 @@ const getSubtreeFolderIds = async (folderId) => {
 export const cascadeDeleteFolder = async (folderId) => {
   const folderIds = await getSubtreeFolderIds(folderId);
 
-  await query(`UPDATE folders SET is_deleted = true WHERE id = ANY($1::uuid[])`, [folderIds]);
-  await query(`UPDATE files SET is_deleted = true WHERE folder_id = ANY($1::uuid[])`, [folderIds]);
+  await query(
+    `UPDATE folders SET is_deleted = true WHERE id = ANY($1::uuid[])`,
+    [folderIds]
+  );
+  await query(
+    `UPDATE files SET is_deleted = true WHERE folder_id = ANY($1::uuid[])`,
+    [folderIds]
+  );
 
   return folderIds;
 };
@@ -25,8 +31,14 @@ export const cascadeDeleteFolder = async (folderId) => {
 export const cascadeRestoreFolder = async (folderId) => {
   const folderIds = await getSubtreeFolderIds(folderId);
 
-  await query(`UPDATE folders SET is_deleted = false WHERE id = ANY($1::uuid[])`, [folderIds]);
-  await query(`UPDATE files SET is_deleted = false WHERE folder_id = ANY($1::uuid[])`, [folderIds]);
+  await query(
+    `UPDATE folders SET is_deleted = false WHERE id = ANY($1::uuid[])`,
+    [folderIds]
+  );
+  await query(
+    `UPDATE files SET is_deleted = false WHERE folder_id = ANY($1::uuid[])`,
+    [folderIds]
+  );
 
   await query(
     `UPDATE folders SET parent_id = NULL
