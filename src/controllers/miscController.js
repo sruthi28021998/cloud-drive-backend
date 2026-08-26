@@ -1,6 +1,7 @@
 import { query } from '../config/db.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { cascadeRestoreFolder } from '../utils/cascade.js';
+import { logActivity } from '../utils/activity.js';
 
 export const search = async (req, res, next) => {
   try {
@@ -36,6 +37,17 @@ export const search = async (req, res, next) => {
   } catch (err) {
     next(err);
   }
+};
+
+export const getActivity = async (req, res, next) => {
+  try {
+    const userId = req.user.id;
+    const result = await query(
+      `SELECT * FROM activities WHERE actor_id = $1 ORDER BY created_at DESC LIMIT 50`,
+      [userId]
+    );
+    res.json({ activities: result.rows });
+  } catch (err) { next(err); }
 };
 
 export const addStar = async (req, res, next) => {
@@ -97,6 +109,7 @@ export const restoreFromTrash = async (req, res, next) => {
       if (!check.rows[0]) throw new AppError('Folder not found in trash', 404, 'NOT_FOUND');
 
       await cascadeRestoreFolder(resourceId);
+      await logActivity(ownerId, 'restore', resourceType, resourceId, {});
       return res.json({ ok: true });
     }
 

@@ -1,10 +1,10 @@
 import { Router } from 'express';
 import { requireAuth } from '../middleware/auth.js';
 import { search, addStar, removeStar, listTrash, restoreFromTrash } from '../controllers/miscController.js';
-
+import { getActivity } from '../controllers/miscController.js';
 const router = Router();
 router.use(requireAuth);
-
+router.get('/activity', getActivity);
 router.get('/search', search);
 router.post('/stars', addStar);
 router.delete('/stars', removeStar);
