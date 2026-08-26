@@ -2,14 +2,19 @@ import { v4 as uuidv4 } from 'uuid';
 import { query } from '../config/db.js';
 import { supabase, BUCKET } from '../config/supabase.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { getAccessLevel } from '../utils/access.js';
+import { logActivity } from '../utils/activity.js';
 
 const ALLOWED_MIME = new Set([
   'image/png', 'image/jpeg', 'image/webp', 'image/gif',
   'application/pdf', 'text/plain',
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/octet-stream',
+  'application/zip',
+  'application/x-zip-compressed'
 ]);
-const MAX_SIZE_BYTES = 500 * 1024 * 1024; // 500MB
+const MAX_SIZE_BYTES = 500 * 1024 * 1024;
 
 const slugify = (name) => name.replace(/[^a-zA-Z0-9._-]/g, '_');
 
@@ -73,6 +78,7 @@ export const completeUpload = async (req, res, next) => {
     );
     if (!result.rows[0]) throw new AppError('File not found', 404, 'NOT_FOUND');
 
+    await logActivity(ownerId, 'upload', 'file', fileId, {});
     res.json({ file: result.rows[0] });
   } catch (err) {
     next(err);
@@ -82,22 +88,19 @@ export const completeUpload = async (req, res, next) => {
 export const getFile = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const ownerId = req.user.id;
+    const userId = req.user.id;
 
-    const result = await query(
-      'SELECT * FROM files WHERE id = $1 AND owner_id = $2 AND is_deleted = false',
-      [id, ownerId]
-    );
+    const access = await getAccessLevel('file', id, userId);
+    if (!access) throw new AppError('File not found', 404, 'NOT_FOUND');
+
+    const result = await query('SELECT * FROM files WHERE id = $1 AND is_deleted = false', [id]);
     const file = result.rows[0];
     if (!file) throw new AppError('File not found', 404, 'NOT_FOUND');
 
-    const { data, error } = await supabase.storage
-      .from(BUCKET)
-      .createSignedUrl(file.storage_key, 60 * 5); // 5 min TTL
-
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(file.storage_key, 60 * 5);
     if (error) throw new AppError('Could not sign URL', 500, 'STORAGE_ERROR');
 
-    res.json({ file, signedUrl: data.signedUrl });
+    res.json({ file, signedUrl: data.signedUrl, accessLevel: access });
   } catch (err) {
     next(err);
   }
@@ -107,7 +110,10 @@ export const updateFile = async (req, res, next) => {
   try {
     const { id } = req.params;
     const { name, folderId } = req.body;
-    const ownerId = req.user.id;
+    const userId = req.user.id;
+
+    const access = await getAccessLevel('file', id, userId);
+    if (!access || access === 'viewer') throw new AppError('Not permitted', 403, 'FORBIDDEN');
 
     const fields = [];
     const values = [];
@@ -115,13 +121,15 @@ export const updateFile = async (req, res, next) => {
     if (name !== undefined) { fields.push(`name = $${idx++}`); values.push(name); }
     if (folderId !== undefined) { fields.push(`folder_id = $${idx++}`); values.push(folderId); }
     fields.push(`updated_at = now()`);
-    values.push(id, ownerId);
+    values.push(id);
 
     const result = await query(
-      `UPDATE files SET ${fields.join(', ')} WHERE id = $${idx} AND owner_id = $${idx + 1} RETURNING *`,
+      `UPDATE files SET ${fields.join(', ')} WHERE id = $${idx} RETURNING *`,
       values
     );
     if (!result.rows[0]) throw new AppError('File not found', 404, 'NOT_FOUND');
+
+    await logActivity(userId, name !== undefined ? 'rename' : 'move', 'file', id, {});
     res.json({ file: result.rows[0] });
   } catch (err) {
     next(err);
@@ -131,12 +139,15 @@ export const updateFile = async (req, res, next) => {
 export const deleteFile = async (req, res, next) => {
   try {
     const { id } = req.params;
-    const ownerId = req.user.id;
-    const result = await query(
-      'UPDATE files SET is_deleted = true WHERE id = $1 AND owner_id = $2 RETURNING id',
-      [id, ownerId]
-    );
+    const userId = req.user.id;
+
+    const access = await getAccessLevel('file', id, userId);
+    if (!access || access === 'viewer') throw new AppError('Not permitted', 403, 'FORBIDDEN');
+
+    const result = await query('UPDATE files SET is_deleted = true WHERE id = $1 RETURNING id', [id]);
     if (!result.rows[0]) throw new AppError('File not found', 404, 'NOT_FOUND');
+
+    await logActivity(userId, 'delete', 'file', id, {});
     res.status(204).send();
   } catch (err) {
     next(err);

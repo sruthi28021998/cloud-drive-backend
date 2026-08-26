@@ -3,6 +3,8 @@ import bcrypt from 'bcryptjs';
 import { query } from '../config/db.js';
 import { AppError } from '../middleware/errorHandler.js';
 import { generateLinkToken } from '../utils/tokens.js';
+import { logActivity } from '../utils/activity.js';
+import { supabase, BUCKET } from '../config/supabase.js';
 
 const assertOwnership = async (resourceType, resourceId, ownerId) => {
   const table = resourceType === 'file' ? 'files' : 'folders';
@@ -32,6 +34,7 @@ export const createShare = async (req, res, next) => {
       [id, resourceType, resourceId, granteeUserId, role, ownerId]
     );
 
+    await logActivity(ownerId, 'share', resourceType, resourceId, { granteeUserId, role });
     res.status(201).json({ id, resourceType, resourceId, granteeUserId, role });
   } catch (err) {
     next(err);
@@ -88,6 +91,7 @@ export const createLinkShare = async (req, res, next) => {
       [id, resourceType, resourceId, token, passwordHash, expiresAt || null, ownerId]
     );
 
+    await logActivity(ownerId, 'share', resourceType, resourceId, { link: true });
     res.status(201).json({ id, token, expiresAt: expiresAt || null });
   } catch (err) {
     next(err);
@@ -116,6 +120,39 @@ export const resolveLinkShare = async (req, res, next) => {
     if (!resource.rows[0]) throw new AppError('Resource not found', 404, 'NOT_FOUND');
 
     res.json({ resourceType: link.resource_type, resource: resource.rows[0] });
+  } catch (err) {
+    next(err);
+  }
+};
+
+export const resolveLinkDownload = async (req, res, next) => {
+  try {
+    const { token } = req.params;
+    const { password } = req.query;
+
+    const result = await query('SELECT * FROM link_shares WHERE token = $1', [token]);
+    const link = result.rows[0];
+    if (!link) throw new AppError('Link not found', 404, 'NOT_FOUND');
+    if (link.expires_at && new Date(link.expires_at) < new Date()) {
+      throw new AppError('Link has expired', 410, 'GONE');
+    }
+    if (link.password_hash) {
+      if (!password || !(await bcrypt.compare(password, link.password_hash))) {
+        throw new AppError('Password required or incorrect', 401, 'UNAUTHORIZED');
+      }
+    }
+    if (link.resource_type !== 'file') {
+      throw new AppError('Only files can be downloaded directly', 400, 'BAD_REQUEST');
+    }
+
+    const fileResult = await query('SELECT * FROM files WHERE id = $1 AND is_deleted = false', [link.resource_id]);
+    const file = fileResult.rows[0];
+    if (!file) throw new AppError('File not found', 404, 'NOT_FOUND');
+
+    const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(file.storage_key, 60 * 5);
+    if (error) throw new AppError('Could not sign URL', 500, 'STORAGE_ERROR');
+
+    res.json({ signedUrl: data.signedUrl });
   } catch (err) {
     next(err);
   }
