@@ -10,7 +10,6 @@ import folderRoutes from './routes/folderRoutes.js';
 import fileRoutes from './routes/fileRoutes.js';
 import shareRoutes from './routes/shareRoutes.js';
 import miscRoutes from './routes/miscRoutes.js';
-
 import { errorHandler } from './middleware/errorHandler.js';
 import { generalLimiter } from './middleware/rateLimit.js';
 
@@ -25,12 +24,15 @@ app.use(express.json({ limit: '2mb' }));
 app.use(cookieParser());
 app.use(generalLimiter);
 
+app.get('/', (req, res) => res.json({ message: 'Cloud Drive backend is running', health: '/api/health' }));
 app.get('/api/health', (req, res) => res.json({ ok: true }));
+
 app.use('/api/auth', authRoutes);
 app.use('/api/folders', folderRoutes);
 app.use('/api/files', fileRoutes);
 app.use('/api/shares', shareRoutes);
 app.use('/api', miscRoutes);
+
 app.use(errorHandler);
 
 export default app;
