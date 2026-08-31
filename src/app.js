@@ -15,9 +15,17 @@ import { generalLimiter } from './middleware/rateLimit.js';
 
 const app = express();
 
+const allowedOrigins = (process.env.CORS_ORIGIN || '').split(',').map(o => o.trim());
+
 app.use(helmet());
 app.use(cors({
-  origin: process.env.CORS_ORIGIN,
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 app.use(express.json({ limit: '2mb' }));
