@@ -96,6 +96,20 @@ export const listTrash = async (req, res, next) => {
   }
 };
 
+export const getStorageUsage = async (req, res, next) => {
+  try {
+    const ownerId = req.user.id;
+    const result = await query(
+      `SELECT COALESCE(SUM(size_bytes), 0)::bigint AS total FROM files WHERE owner_id = $1 AND is_deleted = false`,
+      [ownerId]
+    );
+    res.json({ usedBytes: Number(result.rows[0].total) });
+  } catch (err) {
+    next(err);
+  }
+};
+
+
 export const restoreFromTrash = async (req, res, next) => {
   try {
     const { resourceType, resourceId } = req.body;
